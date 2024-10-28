@@ -5,3 +5,8 @@ scripts/processed_features/
 scripts/evaluation_results/
 scripts/cache/
 scripts/__pycache__/
+checkpoints/
+thuan_1/
+thuan_1_wav/
+voice_recordings/
+wav_folder/
