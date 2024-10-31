@@ -113,7 +113,7 @@ class ProcessedAudioDataset(torch.utils.data.Dataset):
 
 def main():
     # Configuration
-    data_dir = '/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test'
+    data_dir = '/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_full'
     output_dir = 'processed_features'
     n_mfcc = 13
     max_len = 500

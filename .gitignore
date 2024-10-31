@@ -1,4 +1,4 @@
-data_test/
+data_full/
 preprocessing/
 scripts/checkpoints/
 scripts/processed_features/
@@ -10,3 +10,5 @@ thuan_1/
 thuan_1_wav/
 voice_recordings/
 wav_folder/
+data_test/
+scripts/training_runs

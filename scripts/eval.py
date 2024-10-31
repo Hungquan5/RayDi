@@ -202,7 +202,7 @@ def main():
     hidden_size = 256
     output_size = 2
     batch_size = 32
-    checkpoint_path = 'checkpoints/20241026_154831/best_model.pth'  # Update this path
+    checkpoint_path = 'checkpoints/20241031_172229/best_model.pth'  # Update this path
     class_names = ['class_0', 'class_1']  # Update with your class names
     
     # Setup device

@@ -230,10 +230,10 @@ def process_audio_file(input_file, output_dir, augmenter):
 
 def main():
     # Configuration
-    input_dir = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/preprocessing/thuan_1_wav"
-    output_dir = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/1"
+    input_dir = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/preprocessing/background_voice"
+    output_dir = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/0"
     noise_dir = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/preprocessing/background_samples_audio"
-    target_size = 20000
+    target_size = 250000
     
     # Create output directory
     output_dir = Path(output_dir)
