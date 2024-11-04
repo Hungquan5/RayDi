@@ -28,43 +28,47 @@ class FeatureExtractor:
             y, sr = librosa.load(file_path, sr=None)
             mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=self.n_mfcc)
             mfcc = mfcc.T  # Transpose so that time is the first dimension
-
-            # Return MFCC without padding
             return mfcc
 
         except Exception as e:
             logger.error(f"Error processing {file_path}: {str(e)}")
             return None
 
-
-
-
-
     def process_dataset(self):
         """Process entire dataset and save features"""
-        # Initialize lists to store features and labels
         features = []
         labels = []
-        filenames = []  # Store filenames for reference
+        filenames = []
 
         logger.info("Starting feature extraction...")
 
-        # Process each class
-        for label in ['0', '1']:
-            class_path = self.data_dir / label
+        # Process '0' folder with label 0
+        class_path = self.data_dir / '0'
+        if class_path.exists():
             wav_files = list(class_path.glob('*.wav'))
-
-            # Process files with progress bar
-            progress_bar = tqdm(wav_files, desc=f"Extracting features for class {label}", total=len(wav_files))
-
+            progress_bar = tqdm(wav_files, desc="Extracting features for class 0", total=len(wav_files))
+            
             for wav_file in progress_bar:
                 mfcc = self.extract_mfcc(wav_file)
                 if mfcc is not None:
-                    features.append(mfcc)  # Do not convert to NumPy array yet
-                    labels.append(int(label))
+                    features.append(mfcc)
+                    labels.append(0)
                     filenames.append(str(wav_file.name))
 
-        # Save features and labels as lists in HDF5
+        # Process '1_sil' folder with label 1
+        class_path = self.data_dir / '1_sil'
+        if class_path.exists():
+            wav_files = list(class_path.glob('*.wav'))
+            progress_bar = tqdm(wav_files, desc="Extracting features for class 1_sil (label 1)", total=len(wav_files))
+            
+            for wav_file in progress_bar:
+                mfcc = self.extract_mfcc(wav_file)
+                if mfcc is not None:
+                    features.append(mfcc)
+                    labels.append(1)  # Assigning label 1 to 1_sil files
+                    filenames.append(str(wav_file.name))
+
+        # Save features and labels
         self.save_features(features, labels, filenames)
 
         return features, labels
@@ -83,7 +87,7 @@ class FeatureExtractor:
             filename_dset = f.create_dataset('filenames', (len(filenames),), dtype=dt)
             filename_dset[:] = filenames
 
-            # Save each feature as a separate dataset since they are variable length
+            # Save each feature as a separate dataset
             for i, feature in enumerate(features):
                 f.create_dataset(f'features_{i}', data=feature, compression='gzip')
 
@@ -94,11 +98,9 @@ class FeatureExtractor:
         logger.info(f"Saved {len(features)} samples")
 
 class ProcessedAudioDataset(torch.utils.data.Dataset):
-    """Dataset class for pre-processed features"""
     def __init__(self, h5_path):
         self.h5_path = h5_path
         
-        # Load data
         with h5py.File(h5_path, 'r') as f:
             self.labels = f['labels'][:]
             self.filenames = f['filenames'][:]
@@ -108,7 +110,6 @@ class ProcessedAudioDataset(torch.utils.data.Dataset):
         return len(self.labels)
     
     def __getitem__(self, idx):
-        # Return MFCC feature and label
         return torch.tensor(self.features_list[idx], dtype=torch.float32), self.labels[idx]
 
 def main():

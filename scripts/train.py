@@ -271,27 +271,18 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
     return best_run_accuracy, best_run_model
 
 def run_multiple_trainings(
-    train_loader,
-    val_loader,
+    dataset,  # Changed to accept dataset instead of loaders
     input_size,
     hidden_size,
     output_size,
     learning_rate=0.001,
     num_epochs=30,
-    num_runs=3
+    num_runs=3,
+    batch_size=32
 ):
     """
     Perform multiple complete training runs and save results.
-    
-    Args:
-        train_loader: DataLoader for training data
-        val_loader: DataLoader for validation data
-        input_size: Input dimension size
-        hidden_size: Hidden layer size
-        output_size: Output dimension size
-        learning_rate: Initial learning rate
-        num_epochs: Number of epochs per training run
-        num_runs: Number of complete training runs to perform
+    Each run uses a different random seed for dataset splitting.
     """
     # Create base directory for all runs
     base_dir = Path('training_runs')
@@ -312,6 +303,7 @@ def run_multiple_trainings(
         'output_size': output_size,
         'learning_rate': learning_rate,
         'num_epochs': num_epochs,
+        'train_val_split': '80:20',
         'device': str(device)
     }
     
@@ -320,6 +312,40 @@ def run_multiple_trainings(
     
     for run in range(1, num_runs + 1):
         logger.info(f"\nStarting Training Run {run}/{num_runs}")
+        
+        # Generate a unique seed for this run
+        run_seed = 42 + run  # Different seed for each run
+        torch.manual_seed(run_seed)
+        logger.info(f"Using random seed: {run_seed} for run {run}")
+        
+        # Split dataset with new random seed for this run
+        train_size = int(0.8 * len(dataset))
+        val_size = len(dataset) - train_size
+        
+        train_dataset, val_dataset = random_split(
+            dataset, 
+            [train_size, val_size],
+            generator=torch.Generator().manual_seed(run_seed)
+        )
+        
+        # Create data loaders
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=4 if torch.cuda.is_available() else 0,
+            collate_fn=collate_fn,
+            drop_last=True
+        )
+
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=4 if torch.cuda.is_available() else 0,
+            collate_fn=collate_fn,
+            drop_last=True
+        )
         
         # Initialize fresh model and optimizer for each run
         model = ImprovedVoiceAssistantRNN(
@@ -355,6 +381,7 @@ def run_multiple_trainings(
         
         results.append({
             'run': run,
+            'seed': run_seed,
             'accuracy': accuracy,
             'model_path': str(best_model_path)
         })
@@ -422,53 +449,22 @@ def main():
     hidden_size = 256
     output_size = 2
     num_epochs = 30
-    learning_rate = 0.01
+    learning_rate = 0.001
     batch_size = 32
     
-    # Load and split dataset
+    # Load dataset
     dataset = ProcessedAudioDataset('processed_features/processed_features.h5')
-    
-    # Split ratios: 70% train, 15% validation, 15% test
-    total_size = len(dataset)
-    train_size = int(0.7 * total_size)
-    val_size = int(0.15 * total_size)
-    test_size = total_size - train_size - val_size
-    
-    train_dataset, val_dataset, test_dataset = random_split(
-        dataset, 
-        [train_size, val_size, test_size],
-        generator=torch.Generator().manual_seed(42)
-    )
-    
-    # Create data loaders
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=4 if torch.cuda.is_available() else 0,
-        collate_fn=collate_fn,
-        drop_last=True
-    )
-
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=4 if torch.cuda.is_available() else 0,
-        collate_fn=collate_fn,
-        drop_last=True
-    )
     
     # Run multiple training sessions
     results, best_accuracy, best_model_path = run_multiple_trainings(
-        train_loader=train_loader,
-        val_loader=val_loader,
+        dataset=dataset,  # Pass the dataset instead of loaders
         input_size=input_size,
         hidden_size=hidden_size,
         output_size=output_size,
         learning_rate=learning_rate,
         num_epochs=num_epochs,
-        num_runs=6  # Adjust number of runs as needed
+        num_runs=6,  # Adjust number of runs as needed
+        batch_size=batch_size
     )
     
     logger.info("\nTraining Summary:")
@@ -487,6 +483,5 @@ def main():
     best_model.load_state_dict(checkpoint['model_state_dict'])
     
     return best_model
-
 if __name__ == "__main__":
     main()
