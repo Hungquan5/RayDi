@@ -10,10 +10,11 @@ import warnings
 import torch.nn.utils.rnn as rnn_utils
 import torch.nn as nn
 from torch.nn import functional as F
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
+import pygame
 warnings.filterwarnings('ignore')
+
 class ImprovedVoiceAssistantRNN(nn.Module):
+    # [Previous RNN model code remains unchanged]
     def __init__(self, input_size, hidden_size, output_size, num_layers=2, dropout=0.3):
         super(ImprovedVoiceAssistantRNN, self).__init__()
         
@@ -27,51 +28,41 @@ class ImprovedVoiceAssistantRNN(nn.Module):
         )
         
         self.dropout = nn.Dropout(dropout)
-        self.batch_norm = nn.BatchNorm1d(hidden_size * 2)  # *2 for bidirectional
+        self.layer_norm = nn.LayerNorm(hidden_size * 2)
         self.fc1 = nn.Linear(hidden_size * 2, hidden_size)
+        self.layer_norm2 = nn.LayerNorm(hidden_size)
         self.fc2 = nn.Linear(hidden_size, output_size)
     
     def forward(self, x):
-        # Calculate lengths by finding the last non-zero index for each sequence
-        # Sum across feature dimension to get a 1D mask for each timestep
+        if x.size(0) == 0:
+            raise ValueError("Empty batch received")
+            
         mask = (x.sum(dim=-1) != 0).long()
         lengths = mask.sum(dim=1).cpu()
-        
-        # Ensure lengths are valid (greater than 0)
         lengths = torch.clamp(lengths, min=1)
-        
-        # Sort sequences by length in descending order
         lengths, sort_idx = lengths.sort(0, descending=True)
         x = x[sort_idx]
         
-        # Pack the sequences
         packed_x = rnn_utils.pack_padded_sequence(x, lengths.long(), batch_first=True)
-        
-        # Process through RNN
         rnn_out, _ = self.rnn(packed_x)
-        
-        # Unpack the sequences
         rnn_out, _ = rnn_utils.pad_packed_sequence(rnn_out, batch_first=True)
         
-        # Restore original batch order
         _, unsort_idx = sort_idx.sort(0)
         rnn_out = rnn_out[unsort_idx]
         
-        # Take the last valid output for each sequence
         batch_size = rnn_out.size(0)
         last_output = rnn_out[torch.arange(batch_size), lengths[unsort_idx] - 1]
         
-        # Continue with the rest of your forward logic
-        x = self.batch_norm(last_output)
+        x = self.layer_norm(last_output)
         x = self.dropout(x)
-        
-        x = F.relu(self.fc1(x))
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.layer_norm2(x)
         x = self.dropout(x)
-        
         output = self.fc2(x)
         return output
 
-class RealTimeVoiceClassifier:
+class PygameVoiceClassifier:
     def __init__(self, model_path, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
         self.model = self.load_model(model_path)
@@ -83,7 +74,7 @@ class RealTimeVoiceClassifier:
         self.CHANNELS = 1
         self.RATE = 44100
         self.RECORD_SECONDS = 1
-        self.WINDOW_SIZE = self.RATE  # Display 1 second of audio
+        self.WINDOW_SIZE = self.RATE
         
         # Feature extraction parameters
         self.n_mfcc = 13
@@ -96,36 +87,27 @@ class RealTimeVoiceClassifier:
         # Create queue for audio chunks
         self.audio_queue = queue.Queue()
         self.is_running = True
+        self.is_recording = False
+        self.word_detected = False
         
-        # Setup matplotlib for visualization
-        plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(12, 4))
-        self.fig.canvas.manager.set_window_title('Real-time Audio Visualizer')
+        # Initialize Pygame
+        pygame.init()
+        self.width = 800
+        self.height = 600
+        self.screen = pygame.display.set_mode((self.width, self.height))
+        pygame.display.set_caption("Voice Detector")
         
-        # Initialize the line plot
-        self.line, = self.ax.plot([], [], 'b-', linewidth=1)
-        self.detected_text = self.ax.text(0.02, 0.95, '', 
-                                        transform=self.ax.transAxes,
-                                        color='red',
-                                        fontsize=12,
-                                        fontweight='bold')
+        # Button properties
+        self.button_rect = pygame.Rect(300, 500, 200, 50)
+        self.button_color = (0, 128, 255)
+        self.button_text = "Start Recording"
+        self.font = pygame.font.Font(None, 36)
         
-        # Setup plot appearance
-        self.ax.set_title('Real-time Audio Waveform', pad=10)
-        self.ax.set_xlabel('Time')
-        self.ax.set_ylabel('Amplitude')
-        self.ax.set_ylim(-1, 1)
-        self.ax.set_xlim(0, self.WINDOW_SIZE)
-        self.ax.grid(True, alpha=0.3)
-        
-        # Add a horizontal line at y=0
-        self.ax.axhline(y=0, color='k', linestyle='-', alpha=0.3)
-        
-        # Buffer for continuous display
+        # Audio visualization properties
+        self.wave_points = []
         self.audio_buffer = np.zeros(self.WINDOW_SIZE)
         
     def load_model(self, model_path):
-        """Load the trained PyTorch model"""
         checkpoint = torch.load(model_path, map_location=self.device)
         model = ImprovedVoiceAssistantRNN(
             input_size=13,
@@ -138,20 +120,32 @@ class RealTimeVoiceClassifier:
         model.load_state_dict(checkpoint['model_state_dict'])
         return model
     
-    def update_plot(self):
-        """Update the audio waveform plot"""
-        self.line.set_data(range(len(self.audio_buffer)), self.audio_buffer)
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
+    def draw_button(self):
+        pygame.draw.rect(self.screen, self.button_color, self.button_rect)
+        text = self.font.render(self.button_text, True, (255, 255, 255))
+        text_rect = text.get_rect(center=self.button_rect.center)
+        self.screen.blit(text, text_rect)
+    
+    def draw_waveform(self):
+        # Draw audio waveform
+        points = []
+        for i, amp in enumerate(self.audio_buffer[::100]):  # Sample every 100th point
+            x = i * (self.width / (len(self.audio_buffer) // 100))
+            y = (amp * 100) + self.height // 2
+            points.append((x, y))
+        
+        if len(points) > 1:
+            pygame.draw.lines(self.screen, (0, 255, 0), False, points, 2)
     
     def audio_callback(self, in_data, frame_count, time_info, status):
-        """Callback function for audio stream"""
-        audio_data = np.frombuffer(in_data, dtype=np.float32)
-        self.audio_queue.put(audio_data)
+        if self.is_recording:
+            audio_data = np.frombuffer(in_data, dtype=np.float32)
+            self.audio_queue.put(audio_data)
+            self.audio_buffer = np.roll(self.audio_buffer, -len(audio_data))
+            self.audio_buffer[-len(audio_data):] = audio_data
         return (in_data, pyaudio.paContinue)
     
     def extract_features(self, audio_data):
-        """Extract MFCC features from audio data"""
         if len(audio_data) < self.RATE * self.RECORD_SECONDS:
             audio_data = np.pad(audio_data, 
                               (0, self.RATE * self.RECORD_SECONDS - len(audio_data)),
@@ -159,7 +153,6 @@ class RealTimeVoiceClassifier:
         elif len(audio_data) > self.RATE * self.RECORD_SECONDS:
             audio_data = audio_data[:self.RATE * self.RECORD_SECONDS]
         
-        # Extract MFCCs
         mfccs = librosa.feature.mfcc(
             y=audio_data,
             sr=self.RATE,
@@ -171,48 +164,30 @@ class RealTimeVoiceClassifier:
         return torch.FloatTensor(mfccs.T).unsqueeze(0)
     
     def process_audio(self):
-        """Process audio chunks and make predictions"""
         buffer = np.array([], dtype=np.float32)
-        detection_timer = 0
         
         while self.is_running:
-            if not self.audio_queue.empty():
+            if self.is_recording and not self.audio_queue.empty():
                 chunk = self.audio_queue.get()
                 buffer = np.append(buffer, chunk)
                 
-                # Update the rolling display buffer
-                self.audio_buffer = np.roll(self.audio_buffer, -len(chunk))
-                self.audio_buffer[-len(chunk):] = chunk
-                
-                # Update the visualization
-                self.update_plot()
-                
                 if len(buffer) >= self.RATE * self.RECORD_SECONDS:
-                    # Extract features
                     features = self.extract_features(buffer)
                     features = features.to(self.device)
                     
-                    # Make prediction
                     with torch.no_grad():
                         outputs = self.model(features)
                         _, predicted = torch.max(outputs.data, 1)
                         
                         if predicted.item() == 1:
                             print("Wake word detected!")
-                            self.detected_text.set_text('DETECTED!')
-                            detection_timer = 20  # Show detection for 20 frames
-                        elif detection_timer > 0:
-                            detection_timer -= 1
-                            if detection_timer == 0:
-                                self.detected_text.set_text('')
+                            self.word_detected = True
                     
-                    # Reset buffer
                     buffer = np.array([], dtype=np.float32)
             
-            time.sleep(0.01)  # Reduced sleep time for smoother animation
+            time.sleep(0.01)
     
     def start(self):
-        """Start the voice classification system"""
         stream = self.p.open(
             format=self.FORMAT,
             channels=self.CHANNELS,
@@ -222,26 +197,52 @@ class RealTimeVoiceClassifier:
             stream_callback=self.audio_callback
         )
         
-        print("* Listening for wake word...")
-        
         # Start processing thread
         processing_thread = threading.Thread(target=self.process_audio)
         processing_thread.start()
         
+        clock = pygame.time.Clock()
+        
         try:
-            plt.show(block=True)
-        except KeyboardInterrupt:
-            print("\n* Stopping...")
+            while self.is_running:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        self.is_running = False
+                    elif event.type == pygame.MOUSEBUTTONDOWN:
+                        if self.button_rect.collidepoint(event.pos):
+                            self.is_recording = not self.is_recording
+                            self.button_text = "Stop Recording" if self.is_recording else "Start Recording"
+                            self.button_color = (255, 0, 0) if self.is_recording else (0, 128, 255)
+                
+                # Clear screen
+                self.screen.fill((0, 0, 0))
+                
+                # Draw waveform
+                self.draw_waveform()
+                
+                # Draw button
+                self.draw_button()
+                
+                # Draw detection message
+                if self.word_detected:
+                    text = self.font.render("Hello Quan!", True, (255, 255, 0))
+                    text_rect = text.get_rect(center=(self.width // 2, 100))
+                    self.screen.blit(text, text_rect)
+                
+                pygame.display.flip()
+                clock.tick(30)
+        
+        finally:
             self.is_running = False
             processing_thread.join()
             stream.stop_stream()
             stream.close()
             self.p.terminate()
-            plt.close()
+            pygame.quit()
 
 def main():
-    classifier = RealTimeVoiceClassifier(
-        model_path='checkpoints/best_model.pth'
+    classifier = PygameVoiceClassifier(
+        model_path='checkpoints/model_epoch_10_2_11_run3_at1_seed45.pth'
     )
     classifier.start()
 
