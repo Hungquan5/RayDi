@@ -13,73 +13,11 @@ import torch.nn.utils.rnn as rnn_utils
 import numpy as np
 # Set up logging
 import json
+from model_RNN import RNN
+from model_GRU import GRU 
 logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-class ImprovedVoiceAssistantRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers=2, dropout=0.3):
-        super(ImprovedVoiceAssistantRNN, self).__init__()
-        
-        self.rnn = nn.RNN(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
-            bidirectional=True
-        )
-        
-        self.dropout = nn.Dropout(dropout)
-        # Remove batch norm and compensate with layer norm
-        self.layer_norm = nn.LayerNorm(hidden_size * 2)
-        self.fc1 = nn.Linear(hidden_size * 2, hidden_size)
-        self.layer_norm2 = nn.LayerNorm(hidden_size)
-        self.fc2 = nn.Linear(hidden_size, output_size)
-    
-    def forward(self, x):
-        # Handle empty or single-item batches
-        if x.size(0) == 0:
-            raise ValueError("Empty batch received")
-            
-        # Calculate lengths by finding the last non-zero index for each sequence
-        mask = (x.sum(dim=-1) != 0).long()
-        lengths = mask.sum(dim=1).cpu()
-        
-        # Ensure lengths are valid (greater than 0)
-        lengths = torch.clamp(lengths, min=1)
-        
-        # Sort sequences by length in descending order
-        lengths, sort_idx = lengths.sort(0, descending=True)
-        x = x[sort_idx]
-        
-        # Pack the sequences
-        packed_x = rnn_utils.pack_padded_sequence(x, lengths.long(), batch_first=True)
-        
-        # Process through RNN
-        rnn_out, _ = self.rnn(packed_x)
-        
-        # Unpack the sequences
-        rnn_out, _ = rnn_utils.pad_packed_sequence(rnn_out, batch_first=True)
-        
-        # Restore original batch order
-        _, unsort_idx = sort_idx.sort(0)
-        rnn_out = rnn_out[unsort_idx]
-        
-        # Take the last valid output for each sequence
-        batch_size = rnn_out.size(0)
-        last_output = rnn_out[torch.arange(batch_size), lengths[unsort_idx] - 1]
-        
-        # Apply layer normalization instead of batch normalization
-        x = self.layer_norm(last_output)
-        x = self.dropout(x)
-        
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.layer_norm2(x)
-        x = self.dropout(x)
-        
-        output = self.fc2(x)
-        return output
 
 def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, num_epochs, device, 
                 patience=5, min_batch_size=2, min_epochs=10, max_attempts=3, run_number=1):
@@ -101,7 +39,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
         # Reset model weights for new attempt
         if attempt > 1:
             model.apply(lambda m: m.reset_parameters() if hasattr(m, 'reset_parameters') else None)
-            optimizer = optim.AdamW(model.parameters(), lr=optimizer.param_groups[0]['lr'], weight_decay=0.01)
+            optimizer = optim.Adam(model.parameters(), lr=optimizer.param_groups[0]['lr'])
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode='min', factor=0.1, patience=3, verbose=True
             )
@@ -157,7 +95,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
-                    
                     _, predicted = torch.max(outputs.data, 1)
                     train_total += labels.size(0)
                     train_correct += (predicted == labels).sum().item()
@@ -237,7 +174,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                        f"Val Acc: {val_accuracy:.2f}%")
             
             # Save checkpoint if validation accuracy improved
-            if val_accuracy > best_val_accuracy:
+            if val_accuracy > best_val_accuracy or epoch%5==0:
                 best_val_accuracy = val_accuracy
                 patience_counter = 0
                 checkpoint_path = checkpoint_dir / f'model_epoch_{epoch+1}.pth'
@@ -257,9 +194,9 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
                 patience_counter += 1
             
             # Only allow early stopping after minimum epochs
-            if epoch + 1 >= min_epochs and patience_counter >= patience:
-                logger.info(f"Early stopping triggered after {epoch + 1} epochs")
-                break
+            # if epoch + 1 >= min_epochs and patience_counter >= patience:
+            #     logger.info(f"Early stopping triggered after {epoch + 1} epochs")
+            #     break
         
         # If we completed enough epochs, we can stop attempts
         if completed_epochs >= min_epochs:
@@ -348,7 +285,7 @@ def run_multiple_trainings(
         )
         
         # Initialize fresh model and optimizer for each run
-        model = ImprovedVoiceAssistantRNN(
+        model = RNN(
             input_size=input_size,
             hidden_size=hidden_size,
             output_size=output_size
@@ -358,10 +295,10 @@ def run_multiple_trainings(
             model = nn.DataParallel(model)
         
         # Initialize criterion with class weights if needed
-        class_weights = torch.tensor([1.0, 200000 / 80000], device=device)
+        class_weights = torch.tensor([1.0, 50/50], device=device)
         criterion = nn.CrossEntropyLoss(weight=class_weights)
         
-        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='min', factor=0.1, patience=3, verbose=True
         )
@@ -443,45 +380,83 @@ def collate_fn(batch):
     
     return features_tensor, labels_tensor
 
+import argparse
+
 def main():
-    # Hyperparameters
-    input_size = 13
-    hidden_size = 256
-    output_size = 2
-    num_epochs = 30
-    learning_rate = 0.001
-    batch_size = 32
-    
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Train a model on processed audio features.")
+    parser.add_argument(
+        '--input_path', type=str, required=True,
+        help="Path to the processed features file (e.g., 'processed_features/processed_features.h5')."
+    )
+    parser.add_argument(
+        '--output_dir', type=str, default='training_runs',
+        help="Directory to save training results (default: 'training_runs')."
+    )
+    parser.add_argument(
+        '--input_size', type=int, default=13,
+        help="Input size for the model (default: 13)."
+    )
+    parser.add_argument(
+        '--hidden_size', type=int, default=256,
+        help="Hidden size for the RNN (default: 256)."
+    )
+    parser.add_argument(
+        '--output_size', type=int, default=2,
+        help="Output size for the model (default: 2)."
+    )
+    parser.add_argument(
+        '--num_epochs', type=int, default=30,
+        help="Number of epochs to train (default: 30)."
+    )
+    parser.add_argument(
+        '--learning_rate', type=float, default=0.001,
+        help="Learning rate for the optimizer (default: 0.001)."
+    )
+    parser.add_argument(
+        '--batch_size', type=int, default=32,
+        help="Batch size for training and validation (default: 32)."
+    )
+    parser.add_argument(
+        '--num_runs', type=int, default=3,
+        help="Number of independent training runs to perform (default: 3)."
+    )
+    args = parser.parse_args()
+
+    # Log received parameters
+    logger.info(f"Received arguments: {args}")
+
     # Load dataset
-    dataset = ProcessedAudioDataset('processed_features/processed_features.h5')
-    
+    dataset = ProcessedAudioDataset(args.input_path)
+
     # Run multiple training sessions
     results, best_accuracy, best_model_path = run_multiple_trainings(
-        dataset=dataset,  # Pass the dataset instead of loaders
-        input_size=input_size,
-        hidden_size=hidden_size,
-        output_size=output_size,
-        learning_rate=learning_rate,
-        num_epochs=num_epochs,
-        num_runs=6,  # Adjust number of runs as needed
-        batch_size=batch_size
+        dataset=dataset,
+        input_size=args.input_size,
+        hidden_size=args.hidden_size,
+        output_size=args.output_size,
+        learning_rate=args.learning_rate,
+        num_epochs=args.num_epochs,
+        num_runs=args.num_runs,
+        batch_size=args.batch_size
     )
-    
+
     logger.info("\nTraining Summary:")
     logger.info(f"Best overall accuracy: {best_accuracy:.2f}%")
     logger.info(f"Best model saved at: {best_model_path}")
-    
+
     # Load best model for use
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    best_model = ImprovedVoiceAssistantRNN(
-        input_size=input_size,
-        hidden_size=hidden_size,
-        output_size=output_size
+    best_model = RNN(
+        input_size=args.input_size,
+        hidden_size=args.hidden_size,
+        output_size=args.output_size
     ).to(device)
-    
+
     checkpoint = torch.load(best_model_path)
     best_model.load_state_dict(checkpoint['model_state_dict'])
-    
+
     return best_model
+
 if __name__ == "__main__":
     main()

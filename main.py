@@ -1,3 +1,4 @@
+import argparse
 import pyaudio
 import numpy as np
 import torch
@@ -5,81 +6,27 @@ import librosa
 import threading
 import queue
 import time
-from scipy.io import wavfile
-import warnings
-import torch.nn.utils.rnn as rnn_utils
-import torch.nn as nn
-from torch.nn import functional as F
 import pygame
-warnings.filterwarnings('ignore')
-
-class ImprovedVoiceAssistantRNN(nn.Module):
-    # [Previous RNN model code remains unchanged]
-    def __init__(self, input_size, hidden_size, output_size, num_layers=2, dropout=0.3):
-        super(ImprovedVoiceAssistantRNN, self).__init__()
-        
-        self.rnn = nn.RNN(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_layers,
-            batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
-            bidirectional=True
-        )
-        
-        self.dropout = nn.Dropout(dropout)
-        self.layer_norm = nn.LayerNorm(hidden_size * 2)
-        self.fc1 = nn.Linear(hidden_size * 2, hidden_size)
-        self.layer_norm2 = nn.LayerNorm(hidden_size)
-        self.fc2 = nn.Linear(hidden_size, output_size)
-    
-    def forward(self, x):
-        if x.size(0) == 0:
-            raise ValueError("Empty batch received")
-            
-        mask = (x.sum(dim=-1) != 0).long()
-        lengths = mask.sum(dim=1).cpu()
-        lengths = torch.clamp(lengths, min=1)
-        lengths, sort_idx = lengths.sort(0, descending=True)
-        x = x[sort_idx]
-        
-        packed_x = rnn_utils.pack_padded_sequence(x, lengths.long(), batch_first=True)
-        rnn_out, _ = self.rnn(packed_x)
-        rnn_out, _ = rnn_utils.pad_packed_sequence(rnn_out, batch_first=True)
-        
-        _, unsort_idx = sort_idx.sort(0)
-        rnn_out = rnn_out[unsort_idx]
-        
-        batch_size = rnn_out.size(0)
-        last_output = rnn_out[torch.arange(batch_size), lengths[unsort_idx] - 1]
-        
-        x = self.layer_norm(last_output)
-        x = self.dropout(x)
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.layer_norm2(x)
-        x = self.dropout(x)
-        output = self.fc2(x)
-        return output
-
+from scripts.model_RNN import RNN
+from scripts.model_GRU import GRU
 class PygameVoiceClassifier:
-    def __init__(self, model_path, device='cuda' if torch.cuda.is_available() else 'cpu'):
+    def __init__(self, model_path, device, rate, chunk, record_seconds, n_mfcc, n_fft, hop_length):
         self.device = device
         self.model = self.load_model(model_path)
         self.model.eval()
         
         # Audio parameters
-        self.CHUNK = 2048
+        self.CHUNK = chunk
         self.FORMAT = pyaudio.paFloat32
         self.CHANNELS = 1
-        self.RATE = 44100
-        self.RECORD_SECONDS = 1
+        self.RATE = rate
+        self.RECORD_SECONDS = record_seconds
         self.WINDOW_SIZE = self.RATE
         
         # Feature extraction parameters
-        self.n_mfcc = 13
-        self.n_fft = 2048
-        self.hop_length = 512
+        self.n_mfcc = n_mfcc
+        self.n_fft = n_fft
+        self.hop_length = hop_length
         
         # Initialize PyAudio
         self.p = pyaudio.PyAudio()
@@ -109,7 +56,7 @@ class PygameVoiceClassifier:
         
     def load_model(self, model_path):
         checkpoint = torch.load(model_path, map_location=self.device)
-        model = ImprovedVoiceAssistantRNN(
+        model = RNN(
             input_size=13,
             hidden_size=256,
             output_size=2
@@ -146,12 +93,8 @@ class PygameVoiceClassifier:
         return (in_data, pyaudio.paContinue)
     
     def extract_features(self, audio_data):
-        if len(audio_data) < self.RATE * self.RECORD_SECONDS:
-            audio_data = np.pad(audio_data, 
-                              (0, self.RATE * self.RECORD_SECONDS - len(audio_data)),
-                              'constant')
-        elif len(audio_data) > self.RATE * self.RECORD_SECONDS:
-            audio_data = audio_data[:self.RATE * self.RECORD_SECONDS]
+        audio_data = librosa.util.normalize(audio_data)
+        audio_data = librosa.resample(audio_data, orig_sr=self.RATE, target_sr=16000)
         
         mfccs = librosa.feature.mfcc(
             y=audio_data,
@@ -160,8 +103,11 @@ class PygameVoiceClassifier:
             n_fft=self.n_fft,
             hop_length=self.hop_length
         )
+        mfccs = mfccs.T
+        # Z-score normalization
+        mfccs = (mfccs - np.mean(mfccs, axis=0)) / (np.std(mfccs, axis=0) + 1e-8)
         
-        return torch.FloatTensor(mfccs.T).unsqueeze(0)
+        return torch.FloatTensor(mfccs).unsqueeze(0)
     
     def process_audio(self):
         buffer = np.array([], dtype=np.float32)
@@ -241,8 +187,27 @@ class PygameVoiceClassifier:
             pygame.quit()
 
 def main():
+    parser = argparse.ArgumentParser(description="Voice Classifier with PyGame and PyAudio")
+    parser.add_argument('--model_path', type=str, required=True, help="Path to the trained model file")
+    parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu', help="Device to run the model on (cpu or cuda)")
+    parser.add_argument('--rate', type=int, default=44100, help="Sampling rate for audio")
+    parser.add_argument('--chunk', type=int, default=1024, help="Audio chunk size")
+    parser.add_argument('--record_seconds', type=float, default=0.5, help="Duration of audio recording for classification")
+    parser.add_argument('--n_mfcc', type=int, default=13, help="Number of MFCC coefficients")
+    parser.add_argument('--n_fft', type=int, default=1024, help="FFT size for MFCC computation")
+    parser.add_argument('--hop_length', type=int, default=512, help="Hop length for MFCC computation")
+    
+    args = parser.parse_args()
+    
     classifier = PygameVoiceClassifier(
-        model_path='checkpoints/model_epoch_10_2_11_run3_at1_seed45.pth'
+        model_path=args.model_path,
+        device=args.device,
+        rate=args.rate,
+        chunk=args.chunk,
+        record_seconds=args.record_seconds,
+        n_mfcc=args.n_mfcc,
+        n_fft=args.n_fft,
+        hop_length=args.hop_length
     )
     classifier.start()
 
