@@ -7,7 +7,6 @@ from tqdm import tqdm
 import logging
 from pathlib import Path
 from datetime import datetime
-# from feature_extract import ProcessedAudioDataset
 import logging
 import torch.nn.utils.rnn as rnn_utils
 
@@ -20,10 +19,10 @@ class RNN(nn.Module):
             num_layers=num_layers,
             batch_first=True,
             dropout=dropout if num_layers>1 else 0,
-            bidirectional=True
+            bidirectional=False
         )
-        self.layer_norm= nn.LayerNorm(hidden_size*2)
-        self.fc1 = nn.Linear(hidden_size*2,hidden_size)
+        self.layer_norm= nn.LayerNorm(hidden_size)
+        self.fc1 = nn.Linear(hidden_size,hidden_size)
         self.layer_norm2= nn.LayerNorm(hidden_size)
         self.dropout= nn.Dropout(dropout)
         self.fc2 = nn.Linear(hidden_size,output_size)

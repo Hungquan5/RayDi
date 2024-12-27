@@ -5,7 +5,7 @@ import random
 source_folder = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_full/0"  # Replace with the path to your source folder
 destination_folder = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/0_resample"  # Replace with the path to your destination folder
 # Number of files to copy
-num_files_to_copy = 1000
+num_files_to_copy = 2000
 
 # Create the destination folder if it doesn't exist
 os.makedirs(destination_folder, exist_ok=True)

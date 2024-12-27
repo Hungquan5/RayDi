@@ -147,8 +147,8 @@ def process_folder(input_folder, output_folder, threshold_db=-40, min_silence_du
 
 # Example usage
 if __name__ == "__main__":
-    input_folder = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/1_resample"
-    output_folder = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/1_resample_sil"
+    input_folder = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/0_resample"
+    output_folder = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/0_resample_sil"
     
     # Parameters tuned for speech
     threshold_db = -20  # in dB

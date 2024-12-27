@@ -1,3 +1,4 @@
+import argparse
 import numpy as np
 import soundfile as sf
 from pathlib import Path
@@ -7,7 +8,6 @@ from tqdm import tqdm
 import pandas as pd
 from scipy.signal import resample
 import glob
-import os
 
 logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(levelname)s - %(message)s')
@@ -229,34 +229,43 @@ def process_audio_file(input_file, output_dir, augmenter):
         return None, None
 
 def main():
-    # Configuration
-    input_dir = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/preprocessing/background_voice"
-    output_dir = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/0"
-    noise_dir = "/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/preprocessing/background_samples_audio"
-    target_size = 250000
-    
+    parser = argparse.ArgumentParser(description="Audio Augmentation Script")
+    parser.add_argument("--input_dir", type=str, required=True, help="Directory containing input audio files")
+    parser.add_argument("--output_dir", type=str, required=True, help="Directory to save augmented audio files")
+    parser.add_argument("--noise_dir", type=str, required=True, help="Directory containing background noise audio files")
+    parser.add_argument("--target_size", type=int, required=True, help="Target number of augmented audio files")
+    parser.add_argument("--sample_rate", type=int, default=16000, help="Sample rate for audio processing (default: 16000)")
+
+    args = parser.parse_args()
+
+    input_dir = args.input_dir
+    output_dir = args.output_dir
+    noise_dir = args.noise_dir
+    target_size = args.target_size
+    sample_rate = args.sample_rate
+
     # Create output directory
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Initialize augmenter
-    augmenter = AudioAugmenter()
+    augmenter = AudioAugmenter(sr=sample_rate)
     augmenter.set_noise_directory(noise_dir)
-    
+
     # Get list of input files
     input_files = list(Path(input_dir).glob("*.wav"))
     current_size = len(input_files)
-    
+
     logger.info(f"Current dataset size: {current_size}")
     logger.info(f"Target dataset size: {target_size}")
-    
+
     # Calculate augmentations needed
     augmentations_per_file = int(np.ceil((target_size - current_size) / current_size))
-    
+
     # Process files
     processed_files = []
     augmentation_log = []
-    
+
     logger.info("Starting audio augmentation with combined effects...")
     for input_file in tqdm(input_files, desc="Processing files"):
         for _ in range(augmentations_per_file):
@@ -272,11 +281,11 @@ def main():
                     'original_file': input_file.stem,
                     'effects_applied': str(effects_config)
                 })
-    
+
     # Count final dataset size
     final_size = len(list(output_dir.glob("*.wav")))
     logger.info(f"Augmentation completed. Final dataset size: {final_size}")
-    
+
     # Save augmentation log
     pd.DataFrame(augmentation_log).to_csv(output_dir / "augmentation_log.csv", index=False)
 

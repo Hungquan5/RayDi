@@ -2,7 +2,7 @@ import os
 import librosa
 
 # Path to the folder containing the audio files
-folder_path = '/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/voice_recordings'
+folder_path = '/mlcv2/WorkingSpace/Personal/quannh/Project/Project/HOMAI/RayDi_TheSceretary/Voice_Assitant/data_test/0_resample'
 
 # Variable to hold the count of sample rates equal to 44100 Hz
 count_44100 = 0

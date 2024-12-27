@@ -15,6 +15,7 @@ import numpy as np
 import json
 from model_RNN import RNN
 from model_GRU import GRU 
+from model_LSTM import LSTM
 logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -285,7 +286,7 @@ def run_multiple_trainings(
         )
         
         # Initialize fresh model and optimizer for each run
-        model = RNN(
+        model = LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
             output_size=output_size

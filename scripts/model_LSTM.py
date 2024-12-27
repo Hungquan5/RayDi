@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
-import torch.nn.utils.rnn as rnn_utils
 import torch.nn.functional as F
+import torch.nn.utils.rnn as rnn_utils
 
-class GRU(nn.Module):
+class LSTM(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers=2, dropout=0.3):
-        super(GRU, self).__init__()
-        self.rnn = nn.GRU(
+        super(LSTM, self).__init__()
+        self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
@@ -23,23 +23,25 @@ class GRU(nn.Module):
     def forward(self, x):
         if x.size(0) == 0:
             raise ValueError("Empty batch received")
-        
+
         mask = (x.sum(dim=-1) != 0).long()
         lengths = mask.sum(dim=1).cpu()
+
         lengths = torch.clamp(lengths, min=1)
 
         lengths, sort_idx = lengths.sort(0, descending=True)
         x = x[sort_idx]
 
         packed_x = rnn_utils.pack_padded_sequence(x, lengths.long(), batch_first=True)
-        rnn_out, _ = self.rnn(packed_x)
-        rnn_out, _ = rnn_utils.pad_packed_sequence(rnn_out, batch_first=True)
+        lstm_out, (h_n, c_n) = self.lstm(packed_x)
+
+        lstm_out, _ = rnn_utils.pad_packed_sequence(lstm_out, batch_first=True)
 
         _, unsort_idx = sort_idx.sort(0)
-        rnn_out = rnn_out[unsort_idx]
+        lstm_out = lstm_out[unsort_idx]
 
-        batch_size = rnn_out.size(0)
-        last_output = rnn_out[torch.arange(batch_size), lengths[unsort_idx] - 1]
+        batch_size = lstm_out.size(0)
+        last_output = lstm_out[torch.arange(batch_size), lengths[unsort_idx] - 1]
 
         x = self.layer_norm(last_output)
         x = self.fc1(x)
