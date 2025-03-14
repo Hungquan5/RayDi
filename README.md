@@ -63,7 +63,7 @@ python main.py --model_path your_model.pth
 ### About other scripts 
 I will add it in future. Sorry for the messy in my repo
 ## Performance
-- **ACC**: 99%
+- **ACC**: need moretime to give the score
 Tested on a dataset of 10,000 audio samples with only my voice for hotword and diverse noise conditions.
 
 ## Limitations and Future Work
